@@ -150,6 +150,7 @@ textarea{font-family:var(--f-mono);font-size:14px;line-height:1.35;min-height:46
   <p id="ext" hidden></p>
   <p id="note" hidden></p>
   <div id="list"></div>
+  <p id="dup" class="actions" hidden style="margin:28px 0 0;color:var(--muted)"><span id="dup-t"></span><button class="btn" id="b-dup" type="button">Quitar repetidas</button></p>
   <p style="margin:28px 0 0"><button class="btn b-theme" type="button" hidden></button></p>
 </div></div>
 
@@ -387,6 +388,7 @@ async function loadRepo(){
     changed();
     // se bajan de a uno en segundo plano para que queden disponibles sin conexión
     for(const s of Object.values(songs))if(s.repo)await loadBody(s);
+    changed();
   }catch(e){}
 }
 // fuera de Claude la página es una app instalable: guarda en el dispositivo y ofrece copia de seguridad
@@ -417,6 +419,7 @@ function fillSelect(sel,all,values){
 }
 function renderList(){
   const list=$('list'),q=norm($('q').value.trim()),note=$('note');
+  updateDups();
   note.hidden=!(status==='local'||status==='error');
   note.textContent=status==='error'?'No se pudo leer tu biblioteca. Recargá la página para volver a intentar.':
     'No hay conexión con tu biblioteca: lo que guardes ahora queda solo en este navegador.';
@@ -549,6 +552,38 @@ function fromFile(name,text){
   return{title,artist,capo:c?Math.min(12,+c[1]):0,body,updatedAt:Date.now()};
 }
 const slug=s=>norm(String(s).replace(/^.*[\\/]/,'').replace(/\.[^.]+$/,'')).replace(/[^a-z0-9]/g,'');
+/* Una canción cuenta como repetida si coincide el archivo de origen, el par artista+título,
+   o el contenido (comparado sin espacios, mayúsculas ni acentos). */
+const printCache=new WeakMap();
+function bodyPrint(s){
+  const c=printCache.get(s);if(c&&c.body===s.body)return c.print;
+  const t=norm(s.body||'').replace(/[^a-z0-9#]/g,'');let print='';
+  if(t.length>=40){let h=5381;for(let i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))|0;print=h+'_'+t.length}
+  printCache.set(s,{body:s.body,print});return print;
+}
+function updateDups(){
+  const n=loaded?findDups().length:0,b=$('b-dup');
+  $('dup').hidden=!n;$('dup-t').textContent=n===1?'Hay 1 canción repetida.':'Hay '+n+' canciones repetidas.';
+  if(!n){b.dataset.sure='';b.textContent='Quitar repetidas'}
+}
+function dupKeys(s){
+  const k=[],b=bodyPrint(s);
+  if(s.file)k.push('f:'+slug(s.file));
+  if(s.title)k.push('k:'+norm(s.artist)+'|'+norm(s.title));
+  if(b)k.push('c:'+b);
+  return k;
+}
+// devuelve los ids sobrantes; se conserva la publicada en el repositorio, o la más completa y reciente
+function findDups(){
+  const rank=s=>(s.repo?4:0)+(s.genre?2:0)+(s.artist?1:0);
+  const all=Object.entries(songs).filter(([,s])=>!s.example).sort((a,b)=>rank(b[1])-rank(a[1])||(b[1].updatedAt||0)-(a[1].updatedAt||0));
+  const seen=new Set(),out=[];
+  all.forEach(([id,s])=>{
+    const k=dupKeys(s);
+    if(!s.repo&&k.some(x=>seen.has(x)))out.push(id);else k.forEach(x=>seen.add(x));
+  });
+  return out;
+}
 async function importFiles(input,btn,label){
   const all=[...(input.files||[])];input.value='';
   const files=all.filter(f=>/\.(txt|text|crd|cho|chopro)$/i.test(f.name));
@@ -560,10 +595,10 @@ async function importFiles(input,btn,label){
       const t=await readText(f),o=JSON.parse(t.charCodeAt(0)===0xFEFF?t.slice(1):t);
       if(!o||o.cancionero!==1||!o.songs)continue;
       wasBackup=true;
-      const k=s=>norm(s.artist)+'|'+norm(s.title),have=new Set(Object.values(songs).map(k));
+      const have=new Set();Object.values(songs).forEach(s=>dupKeys(s).forEach(x=>have.add(x)));
       for(const [id,s] of Object.entries(o.songs)){
-        if(!s||typeof s.body!=='string'||songs[id]||have.has(k(s)))continue;
-        await store.save(id,s);have.add(k(s));rest++;
+        if(!s||typeof s.body!=='string'||songs[id]||dupKeys(s).some(x=>have.has(x)))continue;
+        await store.save(id,s);dupKeys(s).forEach(x=>have.add(x));rest++;
       }
     }catch(err){}
   }
@@ -574,8 +609,8 @@ async function importFiles(input,btn,label){
     const t=await readText(jf),arr=JSON.parse(t.charCodeAt(0)===0xFEFF?t.slice(1):t);
     if(Array.isArray(arr))arr.forEach(m=>{if(m&&m.archivo)meta[slug(m.archivo)]=m});
   }catch(err){toast('No se pudo leer '+jf.name+'; se importa sin esos datos.')}}
-  const key=s=>norm(s.artist)+'|'+norm(s.title),byKey=new Map(),byFile=new Map();
-  Object.entries(songs).forEach(([id,s])=>{byKey.set(key(s),id);if(s.file)byFile.set(slug(s.file),id)});
+  const seen=new Map();
+  Object.entries(songs).forEach(([id,s])=>dupKeys(s).forEach(x=>{if(!seen.has(x))seen.set(x,id)}));
   btn.disabled=true;let ok=0,dup=0,upd=0,bad=0;
   for(let i=0;i<files.length;i++){
     btn.textContent='Importando '+(i+1)+' de '+files.length+'…';
@@ -590,20 +625,28 @@ async function importFiles(input,btn,label){
         if(+m.capo>0)d.capo=Math.min(12,+m.capo);
       }
       d.file=f.name;
-      const id=byFile.get(slug(f.name))||byKey.get(key(d));
+      const hit=dupKeys(d).find(x=>seen.has(x)),id=hit&&seen.get(hit);
       if(id){
         const cur=songs[id]||{};
-        if(d.genre&&!cur.genre){await store.save(id,{...cur,genre:d.genre,key:cur.key||d.key||'',capo:cur.capo||d.capo,file:cur.file||d.file});upd++}
+        if(d.genre&&!cur.genre&&!cur.repo){await store.save(id,{...cur,genre:d.genre,key:cur.key||d.key||'',capo:cur.capo||d.capo,file:cur.file||d.file});upd++}
         else dup++;
         continue;
       }
       const nid='s'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
-      await store.save(nid,d);byKey.set(key(d),nid);byFile.set(slug(f.name),nid);ok++;
+      await store.save(nid,d);dupKeys(d).forEach(x=>seen.set(x,nid));ok++;
     }catch(err){bad++;if(err&&err.code==='quota_exceeded')break}
   }
   btn.disabled=false;btn.textContent=label;
   toast(ok+' importadas'+(upd?', '+upd+' completadas con su género':'')+(dup?', '+dup+' ya estaban':'')+(bad?', '+bad+' no se pudieron leer':''));
 }
+$('b-dup').addEventListener('click',async e=>{
+  const b=e.currentTarget;
+  if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Sí, quitarlas';return}
+  b.disabled=true;let n=0;
+  for(const id of findDups()){try{await store.remove(id);delete songs[id];n++}catch(err){}}
+  b.disabled=false;b.dataset.sure='';b.textContent='Quitar repetidas';
+  renderList();toast(n===1?'1 repetida quitada':n+' repetidas quitadas');
+});
 $('b-imp').addEventListener('click',()=>$('f-imp').click());
 $('f-imp').addEventListener('change',e=>importFiles(e.target,$('b-imp'),'Importar archivos'));
 if('webkitdirectory' in $('f-dir')){
