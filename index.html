@@ -104,6 +104,9 @@ h1{font-family:var(--f-display);font-weight:700;font-size:1.9rem;line-height:1.1
 .read small{font-size:.58rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:400}
 .more{display:none;flex-wrap:wrap;gap:6px 8px;align-items:center;justify-content:center;flex-basis:100%}
 .bar.open .more{display:flex}
+.bar.off{display:none}
+.fab{position:fixed;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:5;width:44px;height:44px;border-radius:50%;
+  border:1px solid var(--line);background:var(--bar);color:var(--ink);opacity:.7;display:inline-flex;align-items:center;justify-content:center;padding:0}
 .speed{display:inline-flex;align-items:center;gap:8px;font-size:.9rem;color:var(--muted)}
 .speed input{width:120px;accent-color:var(--accent)}
 svg{width:18px;height:18px;fill:currentColor}
@@ -164,21 +167,27 @@ textarea{font-family:var(--f-mono);font-size:14px;line-height:1.35;min-height:46
     <div class="actions"><button class="btn" id="b-ghcopy" type="button">Copiar bloque</button><button class="btn link" id="b-ghclose" type="button">Cerrar</button></div>
   </div>
   <div id="sheet" class="sheet fluid"></div>
+  <button class="fab" id="b-show" hidden aria-label="Mostrar controles"><svg viewBox="0 0 24 24"><path d="M4.5 15.5 12 8l7.5 7.5-1.6 1.6L12 11.2l-5.9 5.9z"/></svg></button>
   <div class="bar" id="bar">
     <button class="ib" id="b-back" aria-label="Volver a la lista"><svg viewBox="0 0 24 24"><path d="M15.5 4.5 8 12l7.5 7.5 1.6-1.6L11.2 12l5.9-5.9z"/></svg></button>
-    <div class="grp">
-      <button id="b-tdown" aria-label="Bajar medio tono">−</button>
-      <div class="read"><small>Tono</small><span id="t-read">0</span></div>
-      <button id="b-tup" aria-label="Subir medio tono">+</button>
-    </div>
-    <div class="grp">
-      <button id="b-fdown" aria-label="Letra más chica">A−</button>
-      <button id="b-fup" aria-label="Letra más grande" style="border-left:1px solid var(--line)">A+</button>
-    </div>
     <button class="ib" id="b-play" aria-label="Desplazamiento automático"><svg viewBox="0 0 24 24" id="i-play"><path d="M7 4.5v15l12-7.5z"/></svg></button>
+    <div class="grp">
+      <button id="b-sdown" aria-label="Más lento">−</button>
+      <div class="read"><small>Veloc.</small><span id="s-read"></span></div>
+      <button id="b-sup" aria-label="Más rápido">+</button>
+    </div>
+    <button class="ib" id="b-hide" aria-label="Ocultar controles"><svg viewBox="0 0 24 24"><path d="M4.5 8.5 12 16l7.5-7.5-1.6-1.6L12 12.8 6.1 6.9z"/></svg></button>
     <button class="ib" id="b-more" aria-label="Más opciones"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
     <div class="more">
-      <label class="speed" style="flex-direction:row">Velocidad <input id="speed" type="range" min="1" max="10" step="1"></label>
+      <div class="grp">
+        <button id="b-tdown" aria-label="Bajar medio tono">−</button>
+        <div class="read"><small>Tono</small><span id="t-read">0</span></div>
+        <button id="b-tup" aria-label="Subir medio tono">+</button>
+      </div>
+      <div class="grp">
+        <button id="b-fdown" aria-label="Letra más chica">A−</button>
+        <button id="b-fup" aria-label="Letra más grande" style="border-left:1px solid var(--line)">A+</button>
+      </div>
       <button class="ib txt" id="b-cols"></button>
       <button class="ib txt" id="b-mode"></button>
       <button class="ib txt" id="b-full">Pantalla completa</button>
@@ -384,7 +393,7 @@ const STANDALONE=!window.claude;
 /* ---------- vistas ---------- */
 let view='list',curId=null,shown=null;
 function show(v){
-  stopScroll();view=v;
+  stopScroll();setBar(true);view=v;
   $('v-list').hidden=v!=='list';$('v-song').hidden=v!=='song';$('v-edit').hidden=v!=='edit';
   window.scrollTo(0,0);
 }
@@ -471,11 +480,12 @@ function toast(msg){const t=$('toast');t.textContent=msg;t.hidden=false;clearTim
 /* ---------- desplazamiento automático ---------- */
 let playing=false,lastTs=0,acc=0;
 const ICON={play:'M7 4.5v15l12-7.5z',pause:'M6.5 5h4v14h-4zM13.5 5h4v14h-4z'};
-function setPlay(on){playing=on;$('b-play').classList.toggle('on',on);$('i-play').firstElementChild.setAttribute('d',on?ICON.pause:ICON.play)}
+function setBar(on){$('bar').classList.toggle('off',!on);$('b-show').hidden=on}
+function setPlay(on){playing=on;setBar(!on);$('b-play').classList.toggle('on',on);$('i-play').firstElementChild.setAttribute('d',on?ICON.pause:ICON.play)}
 function stopScroll(){if(playing)setPlay(false)}
 function tick(ts){
   if(!playing)return;
-  if(lastTs){acc+=(ts-lastTs)/1000*(2+prefs.speed*3);const px=Math.floor(acc);if(px){acc-=px;window.scrollBy(0,px)}}
+  if(lastTs){acc+=(ts-lastTs)/1000*prefs.speed*1.5;const px=Math.floor(acc);if(px){acc-=px;window.scrollBy(0,px)}}
   lastTs=ts;
   if(window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-1){setPlay(false);return}
   requestAnimationFrame(tick);
@@ -496,8 +506,14 @@ $('b-fdown').addEventListener('click',()=>size(-1));
 $('b-fup').addEventListener('click',()=>size(1));
 $('b-play').addEventListener('click',()=>{if(playing)setPlay(false);else{setPlay(true);lastTs=0;acc=0;requestAnimationFrame(tick)}});
 $('b-more').addEventListener('click',()=>$('bar').classList.toggle('open'));
-$('speed').value=prefs.speed;
-$('speed').addEventListener('input',e=>{prefs.speed=+e.target.value;savePrefs()});
+// velocidad en números del 1 al 30; las preferencias viejas (escala 1 a 10) se convierten una vez
+if(prefs.sv!==2){prefs.speed=Math.round((2+3*prefs.speed)/1.5);prefs.sv=2;savePrefs()}
+const spd=d=>{prefs.speed=Math.max(1,Math.min(30,(+prefs.speed||7)+d));savePrefs();$('s-read').textContent=prefs.speed};
+spd(0);
+$('b-sdown').addEventListener('click',()=>spd(-1));
+$('b-sup').addEventListener('click',()=>spd(1));
+$('b-hide').addEventListener('click',()=>setBar(false));
+$('b-show').addEventListener('click',()=>setBar(true));
 $('b-cols').addEventListener('click',()=>{const k=wide()?'colsW':'colsN';prefs[k]=prefs[k]%3+1;savePrefs();applySize()});
 $('b-mode').addEventListener('click',()=>{prefs.mode=prefs.mode==='orig'?'fluid':'orig';savePrefs();renderSheet(songs[curId],curId)});
 window.addEventListener('resize',()=>{if(view==='song')applySize()});
@@ -602,6 +618,17 @@ if(STANDALONE){
     navigator.clipboard.writeText(t.value).then(()=>toast('Bloque copiado'),()=>{t.focus();t.select();toast('Copialo desde el cuadro')});
   });
   if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});
+}else if(window.claude.use){
+  // dentro de Claude la copia se ofrece con el guardado de archivos de la plataforma
+  window.claude.use('downloads').then(dl=>{
+    if(!dl)return;
+    $('b-exp').hidden=false;
+    $('b-exp').addEventListener('click',()=>{
+      const mine=Object.fromEntries(Object.entries(songs).filter(([,s])=>!s.example));
+      dl.save({filename:'cancionero-copia.json',data:JSON.stringify({cancionero:1,exported:new Date().toISOString(),songs:mine})})
+        .then(()=>toast('Copia guardada'),e=>{if(!e||e.code!=='declined')toast('No se pudo guardar la copia.')});
+    });
+  }).catch(()=>{});
 }
 $('f-art').addEventListener('change',renderList);
 $('f-gen').addEventListener('change',renderList);
