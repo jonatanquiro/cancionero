@@ -1,0 +1,2 @@
+Subi aca un archivo .txt por tema (primera linea: "Artista - Titulo", despues la letra con acordes)
+y agrega su entrada en canciones.json, en la carpeta de arriba.
