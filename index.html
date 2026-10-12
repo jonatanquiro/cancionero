@@ -150,6 +150,7 @@ textarea{font-family:var(--f-mono);font-size:14px;line-height:1.35;min-height:46
   <p id="ext" hidden></p>
   <p id="note" hidden></p>
   <div id="list"></div>
+  <p style="margin:28px 0 0"><button class="btn b-theme" type="button" hidden></button></p>
 </div></div>
 
 <div id="v-song" class="wrap" hidden>
@@ -191,6 +192,7 @@ textarea{font-family:var(--f-mono);font-size:14px;line-height:1.35;min-height:46
       <button class="ib txt" id="b-cols"></button>
       <button class="ib txt" id="b-mode"></button>
       <button class="ib txt" id="b-full">Pantalla completa</button>
+      <button class="ib txt b-theme" type="button" hidden></button>
     </div>
   </div>
 </div>
@@ -512,6 +514,17 @@ const spd=d=>{prefs.speed=Math.max(1,Math.min(30,(+prefs.speed||7)+d));savePrefs
 spd(0);
 $('b-sdown').addEventListener('click',()=>spd(-1));
 $('b-sup').addEventListener('click',()=>spd(1));
+// tema: fuera de Claude se elige a mano (automático sigue al sistema); dentro de Claude lo maneja el visor
+const THEMES={auto:'automático',dark:'oscuro',light:'claro'};
+function applyTheme(){
+  const t=THEMES[prefs.theme]?prefs.theme:'auto',root=document.documentElement;
+  if(STANDALONE){if(t==='auto')root.removeAttribute('data-theme');else root.setAttribute('data-theme',t)}
+  document.querySelectorAll('.b-theme').forEach(b=>{b.hidden=!STANDALONE;b.textContent='Tema: '+THEMES[t]});
+}
+document.querySelectorAll('.b-theme').forEach(b=>b.addEventListener('click',()=>{
+  const k=Object.keys(THEMES);prefs.theme=k[(k.indexOf(THEMES[prefs.theme]?prefs.theme:'auto')+1)%k.length];savePrefs();applyTheme();
+}));
+applyTheme();
 $('b-hide').addEventListener('click',()=>setBar(false));
 $('b-show').addEventListener('click',()=>setBar(true));
 $('b-cols').addEventListener('click',()=>{const k=wide()?'colsW':'colsN';prefs[k]=prefs[k]%3+1;savePrefs();applySize()});
