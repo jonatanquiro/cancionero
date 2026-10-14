@@ -223,6 +223,19 @@ textarea{font-family:var(--f-mono);font-size:14px;line-height:1.35;min-height:46
   <p id="note" hidden></p>
   <div id="list"></div>
   <p id="dup" class="actions" hidden style="margin:28px 0 0;color:var(--muted)"><span id="dup-t"></span><button class="btn" id="b-dup" type="button">Quitar repetidas</button></p>
+  <div id="sync" class="lcard" hidden style="margin-top:28px">
+    <div class="lhead"><h3>Guardar en GitHub</h3><span id="sy-st" class="hint"></span></div>
+    <div id="sy-help" class="hint"></div>
+    <div id="sy-form" class="two">
+      <label>Repositorio <input id="sy-repo" autocomplete="off" spellcheck="false"></label>
+      <label>Clave de acceso <input id="sy-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"></label>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="sy-go" type="button">Conectar</button>
+      <button class="btn" id="sy-now" type="button" hidden>Sincronizar ahora</button>
+      <button class="btn link" id="sy-off" type="button" hidden>Desconectar este dispositivo</button>
+    </div>
+  </div>
   <p style="margin:28px 0 0"><button class="btn b-theme" type="button" hidden></button></p>
 </div></div>
 
@@ -466,7 +479,10 @@ let songs={},loaded=false,store=null,status='loading';
 function localStore(){
   try{songs=JSON.parse(localStorage.getItem('cancionero.songs')||'{}')}catch(e){songs={}}
   const persist=()=>{try{localStorage.setItem('cancionero.songs',JSON.stringify(ownSongs()))}catch(e){}changed()};
-  return{save:async(id,d)=>{songs[id]=d;persist()},remove:async id=>{delete songs[id];persist()}};
+  return{
+    save:async(id,d)=>{songs[id]=STANDALONE?{...d,updatedAt:Date.now()}:d;persist();onLocalChange(id,false)},
+    remove:async id=>{delete songs[id];persist();onLocalChange(id,true)}
+  };
 }
 async function init(){
   let db=null;
@@ -1199,6 +1215,132 @@ window.addEventListener('pagehide',stopLoop);
 $('b-home').addEventListener('click',()=>{show('list');renderList()});
 $('n-list').addEventListener('click',()=>{show('list');renderList()});
 $('n-learn').addEventListener('click',()=>{show('learn');renderLearn()});
+
+/* ---------- sincronización con un repositorio privado de GitHub (solo en la app instalable) ----------
+   Todas las canciones propias viven en un único archivo, cancionero.json, dentro del repositorio.
+   Cada cambio lleva fecha; al juntar lo local con lo de GitHub gana lo más reciente, y los borrados
+   quedan anotados para que no "resuciten" desde otro dispositivo. La clave solo se guarda en este dispositivo. */
+const GHK='cancionero.gh',TOMB='cancionero.borradas',GHFILE='cancionero.json',GHREPO='jonatanquiro/cancionero-datos';
+let gh=null,tombs={},syncTimer=0,syncing=false,syncAgain=false,lastSync=0,syncErr='';
+try{gh=JSON.parse(localStorage.getItem(GHK)||'null')}catch(e){}
+try{tombs=JSON.parse(localStorage.getItem(TOMB)||'{}')}catch(e){}
+const saveTombs=()=>{try{localStorage.setItem(TOMB,JSON.stringify(tombs))}catch(e){}};
+function onLocalChange(id,removed){
+  if(!STANDALONE)return;
+  if(removed){tombs[id]=Date.now();saveTombs()}
+  if(gh)scheduleSync(1500);
+}
+function scheduleSync(ms){clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,ms)}
+const b64e=str=>{const by=new TextEncoder().encode(str);let out='';for(let i=0;i<by.length;i+=0x8000)out+=String.fromCharCode.apply(null,by.subarray(i,i+0x8000));return btoa(out)};
+const b64d=b=>{const bin=atob(b.replace(/\s/g,''));const by=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)by[i]=bin.charCodeAt(i);return new TextDecoder().decode(by)};
+const stable=v=>Array.isArray(v)?'['+v.map(stable).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+stable(v[k])).join(',')+'}':JSON.stringify(v);
+function ghApi(path,opt){
+  opt=opt||{};
+  const h={'Accept':'application/vnd.github+json','Authorization':'Bearer '+gh.token,'X-GitHub-Api-Version':'2022-11-28'};
+  if(opt.body)h['Content-Type']='application/json';
+  return fetch('https://api.github.com/repos/'+gh.repo+path,{method:opt.method||'GET',headers:h,body:opt.body,cache:'no-store'});
+}
+async function readRemote(){
+  const r=await ghApi('/contents/'+GHFILE);
+  if(r.status===404)return{doc:{version:1,songs:{},deleted:{}},sha:null};
+  if(!r.ok)throw r;
+  const j=await r.json();let text;
+  if(j.content)text=b64d(j.content);
+  else{const b=await ghApi('/git/blobs/'+j.sha);if(!b.ok)throw b;text=b64d((await b.json()).content)}
+  const doc=JSON.parse(text);doc.songs=doc.songs||{};doc.deleted=doc.deleted||{};
+  return{doc,sha:j.sha};
+}
+function mergeDocs(remote){
+  const local=ownSongs(),out={},del={...remote.deleted};
+  Object.entries(tombs).forEach(([id,t])=>{if(!(del[id]>=t))del[id]=t});
+  // una canción que solo está en este dispositivo pero ya existe en GitHub con otro id no se sube repetida
+  const up=new Set();Object.values(remote.songs).forEach(x=>dupKeys(x).forEach(k=>up.add(k)));
+  new Set([...Object.keys(local),...Object.keys(remote.songs)]).forEach(id=>{
+    const a=local[id],b=remote.songs[id];
+    if(a&&!b&&!remote.deleted[id]&&dupKeys(a).some(k=>up.has(k))){del[id]=Date.now();return}
+    const best=!a?b:!b?a:((a.updatedAt||0)>=(b.updatedAt||0)?a:b);
+    if(del[id]&&del[id]>=(best.updatedAt||0))return;
+    out[id]=best;
+  });
+  return{version:1,songs:out,deleted:del};
+}
+function applyMerged(m){
+  const pub=Object.fromEntries(Object.entries(songs).filter(([,x])=>x.repo));
+  songs={...pub,...m.songs};
+  tombs={};saveTombs();
+  try{localStorage.setItem('cancionero.songs',JSON.stringify(ownSongs()))}catch(e){}
+  changed();
+}
+async function syncNow(){
+  if(!gh||!STANDALONE)return;
+  if(syncing){syncAgain=true;return}
+  syncing=true;syncErr='';updateSyncUI();
+  try{
+    for(let attempt=0;attempt<3;attempt++){
+      const {doc,sha}=await readRemote(),merged=mergeDocs(doc);
+      if(stable(merged)!==stable(doc)){
+        const body={message:'Actualizar canciones',content:b64e(JSON.stringify(merged,null,1))};
+        if(sha)body.sha=sha;
+        const r=await ghApi('/contents/'+GHFILE,{method:'PUT',body:JSON.stringify(body)});
+        if(r.status===409||r.status===422)continue; // otro dispositivo guardó justo antes: se vuelve a juntar
+        if(!r.ok)throw r;
+      }
+      applyMerged(merged);lastSync=Date.now();break;
+    }
+  }catch(e){
+    const st=e&&e.status;
+    syncErr=st===401?'La clave no es válida o venció.':st===403?'GitHub no deja escribir: revisá que la clave tenga «Contents: Read and write».':st===404?'No encuentro el repositorio, o la clave no tiene acceso a él.':'No se pudo sincronizar. ¿Hay conexión?';
+  }
+  syncing=false;updateSyncUI();
+  if(syncAgain){syncAgain=false;scheduleSync(300)}
+}
+function updateSyncUI(){
+  if(!STANDALONE)return;
+  $('sync').hidden=false;
+  const on=!!gh;
+  $('sy-form').hidden=on;$('sy-go').hidden=on;$('sy-now').hidden=!on;$('sy-off').hidden=!on;
+  $('sy-st').textContent=!on?'Sin conectar':syncing?'Sincronizando…':syncErr?'Error':lastSync?'Al día · '+new Date(lastSync).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'}):'Conectado';
+  const help=$('sy-help');
+  if(on){
+    help.replaceChildren(el('p',null,syncErr||'Conectado a '+gh.repo+'. Las canciones que cargues, edites o borres se guardan solas y aparecen en tus otros dispositivos conectados.'));
+  }else{
+    help.innerHTML='<p>Así tus canciones quedan guardadas en tu repositorio privado y aparecen en todos tus dispositivos. Hacelo una vez en cada uno:</p>'+
+      '<ol style="margin:6px 0 0;padding-left:1.3em;display:flex;flex-direction:column;gap:4px">'+
+      '<li>Abrí <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">crear una clave en GitHub</a> (con tu sesión iniciada).</li>'+
+      '<li>Poné un nombre, por ejemplo «Cancionero celular», y una fecha de vencimiento.</li>'+
+      '<li>En <b>Repository access</b> elegí <b>Only select repositories</b> y marcá <b>cancionero-datos</b>.</li>'+
+      '<li>En <b>Permissions</b>, buscá <b>Contents</b> y poné <b>Read and write</b>.</li>'+
+      '<li>Tocá <b>Generate token</b>, copiá la clave y pegala acá abajo.</li></ol>';
+  }
+}
+$('sy-repo').value=GHREPO;
+$('sy-go').addEventListener('click',async()=>{
+  const repo=$('sy-repo').value.trim().replace(/^https?:\/\/github\.com\//,'').replace(/\/$/,''),token=$('sy-token').value.trim();
+  if(!/^[\w.-]+\/[\w.-]+$/.test(repo)){toast('Escribí el repositorio como usuario/nombre.');return}
+  if(!token){toast('Pegá la clave de acceso.');return}
+  $('sy-go').disabled=true;
+  const prev=gh;gh={repo,token};
+  try{
+    const r=await ghApi('');
+    const j=r.ok?await r.json():null;
+    if(!r.ok)throw r;
+    if(j.permissions&&j.permissions.push===false){const e=new Error();e.status=403;throw e}
+    try{localStorage.setItem(GHK,JSON.stringify(gh))}catch(e){}
+    $('sy-token').value='';toast('Conectado. Sincronizando…');
+    syncNow();
+  }catch(e){
+    gh=prev;const st=e&&e.status;
+    toast(st===401?'La clave no es válida.':st===404?'No encuentro ese repositorio con esa clave.':st===403?'La clave no tiene permiso de escritura.':'No se pudo conectar. ¿Hay conexión?');
+  }
+  $('sy-go').disabled=false;updateSyncUI();
+});
+$('sy-now').addEventListener('click',()=>syncNow());
+$('sy-off').addEventListener('click',()=>{
+  gh=null;try{localStorage.removeItem(GHK)}catch(e){}
+  syncErr='';lastSync=0;updateSyncUI();toast('Este dispositivo ya no sincroniza. Tus canciones siguen acá.');
+});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&gh&&Date.now()-lastSync>30000)syncNow()});
+if(STANDALONE){updateSyncUI();if(gh)setTimeout(syncNow,400)}
 
 renderList();init();
 })();
