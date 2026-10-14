@@ -1118,7 +1118,7 @@ const counts=(p)=>p.sub===1?p.s.length===3?['1','2','3']:['1','2','3','4']
   :p.s.length===6?['1','y','2','y','3','y']:['1','y','2','y','3','y','4','y'];
 const ARROW={D:'↓',U:'↑',X:'✕',x:'↓',B:'B'};
 // clic de metrónomo en cada tiempo; el 1 suena más agudo
-function tick(when,strong){
+function metroClick(when,strong){
   const ctx=ac();if(!ctx)return;
   const o=ctx.createOscillator(),g=ctx.createGain();
   o.frequency.value=strong?1700:1150;
@@ -1175,7 +1175,7 @@ function lessonCard(p,kind){
     if(loop&&loop.card===card){stopLoop();return}
     let last=null;
     startLoop(card,btn,p,(k,when,ch)=>{
-      if(prefs.lclick!==false&&k%p.sub===0)tick(when,k===0);
+      if(prefs.lclick!==false&&k%p.sub===0)metroClick(when,k===0);
       if(kind==='strum')strumStep(p,k,when,ch);else pickStep(p,k,when,ch);
     },(k,ch)=>{
       if(ch!==last){last=ch;now.textContent=ch;$('l-now-t').textContent='Practicando: '+p.n+' · '+ch;if(kind==='pick')pickGrid(grid,p,ch)}
