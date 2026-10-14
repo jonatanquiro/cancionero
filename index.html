@@ -154,6 +154,9 @@ svg{width:18px;height:18px;fill:currentColor}
 .pc small{font-size:.68rem;color:var(--muted);font-weight:400}
 .pc.now{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .pc.now small{color:inherit}
+.pc.rest span{opacity:.28}
+.pc.rest{border-style:dashed}
+.pc.now.rest span{opacity:.6}
 .tabg{display:grid;font-family:var(--f-mono);font-size:.9rem;overflow-x:auto;line-height:1.5}
 .tabg span{text-align:center;border-bottom:1px solid var(--line)}
 .tabg .sl{color:var(--muted);text-align:left;border:0}
@@ -295,6 +298,7 @@ textarea{font-family:var(--f-mono);font-size:14px;line-height:1.35;min-height:46
       <div class="read"><small>BPM</small><span id="l-bpm"></span></div>
       <button id="l-bup" type="button" aria-label="Más rápido">+</button>
     </div>
+    <button class="btn" id="l-click" type="button"></button>
   </div>
   <div id="l-body"></div>
   <div class="nowbar" id="l-now" hidden>
@@ -947,8 +951,9 @@ function voice(i,midi,when,vol,len,long){
   const prev=ringing[i];if(prev){try{prev.g.gain.setTargetAtTime(0,when,0.015);prev.s.stop(when+0.25)}catch(e){}}
   const s=ctx.createBufferSource(),g=ctx.createGain();
   s.buffer=pluckBuf(ctx,midi,long);g.gain.setValueAtTime(vol,when);
-  if(len){g.gain.setTargetAtTime(0,when+len,0.02);s.stop(when+len+0.3)}
   s.connect(g);g.connect(master);s.start(when);
+  // el corte se programa después de arrancar la nota: al revés el navegador da error y la práctica se traba
+  if(len){g.gain.setTargetAtTime(0,when+len,0.02);s.stop(when+len+0.3)}
   const v={s,g};ringing[i]=v;live.add(v);s.onended=()=>live.delete(v);
   return true;
 }
@@ -1050,7 +1055,7 @@ function startLoop(card,btn,p,play,onStep){
     if(next<ctx.currentTime)next=ctx.currentTime+0.05;
     while(next<ctx.currentTime+0.15){
       const k=i%n,chord=PROGS[prefs.lprog][Math.floor(i/n)%PROGS[prefs.lprog].length];
-      play(k,next,chord);
+      try{play(k,next,chord)}catch(e){}
       const ms=Math.max(0,(next-ctx.currentTime)*1000);
       loop.timers.push(setTimeout(()=>{if(loop&&loop.card===card)onStep(k,chord)},ms));
       if(loop.timers.length>64)loop.timers.splice(0,32);
@@ -1061,13 +1066,21 @@ function startLoop(card,btn,p,play,onStep){
   $('l-now-t').textContent='Practicando: '+p.n;$('l-now').hidden=false;
 }
 const counts=(p)=>p.sub===1?p.s.length===3?['1','2','3']:['1','2','3','4']:p.s.length===6?['1','y','2','y','3','y']:['1','y','2','y','3','y','4','y'];
-const ARROW={D:'↓',U:'↑',X:'✕',x:'·↓',B:'B','-':'·'};
+const ARROW={D:'↓',U:'↑',X:'✕',x:'↓',B:'B'};
+// clic de metrónomo en cada tiempo; el 1 suena más agudo
+function tick(when,strong){
+  const ctx=ac();if(!ctx)return;
+  const o=ctx.createOscillator(),g=ctx.createGain();
+  o.frequency.value=strong?1700:1150;
+  g.gain.setValueAtTime(0.0001,when);g.gain.exponentialRampToValueAtTime(strong?0.55:0.32,when+0.003);g.gain.exponentialRampToValueAtTime(0.0001,when+0.05);
+  o.connect(g);g.connect(master);o.start(when);o.stop(when+0.07);
+}
 function strumStep(p,k,when,chord){
   const sh=shapeOf(chord);if(!sh)return;const f=sh.frets,c=p.s[k],acc=k===0?1:(k%p.sub===0?0.85:0.7);
   if(c==='D')strum(f,when,'down',acc);
   else if(c==='U')strum(f,when,'up',0.75);
-  else if(c==='X')strum(f,when,'down',0.45,0.03);
-  else if(c==='x')strum(f.map((v,i)=>i>=2?v:null),when,'down',0.6,0.09);
+  else if(c==='X')strum(f,when,'down',0.7,0.045);
+  else if(c==='x')strum(f.map((v,i)=>i>=2?v:null),when,'down',1,0.13);
   else if(c==='B'){const i=f.findIndex(v=>v!==null);voice(i,OPEN_MIDI[i]+f[i],when,1)}
 }
 function pickTargets(f,sym){
@@ -1100,13 +1113,21 @@ function lessonCard(p,kind){
   let grid;
   if(kind==='strum'){
     grid=el('div','pgrid');const cs=counts(p);
-    [...p.s].forEach((c,k)=>{const cell=el('div','pc');cell.dataset.k=k;cell.append(el('span',null,ARROW[c]||c),el('small',null,cs[k]||''));grid.append(cell)});
+    [...p.s].forEach((c,k)=>{
+      const cell=el('div','pc');cell.dataset.k=k;
+      if(c==='-'){cell.classList.add('rest');cell.title='La mano pasa sin tocar';cell.append(el('span',null,k%p.sub===0?'↓':'↑'),el('small',null,cs[k]||''))}
+      else{cell.append(el('span',null,ARROW[c]||c),el('small',null,c==='x'?'corto':cs[k]||''))}
+      grid.append(cell);
+    });
   }else{grid=el('div','tabg');pickGrid(grid,p,PROGS[prefs.lprog][0])}
   card.append(head,el('p','hint',p.d),grid,btn);
   btn.addEventListener('click',()=>{
     if(loop&&loop.card===card){stopLoop();return}
     let last=null;
-    startLoop(card,btn,p,(k,when,ch)=>kind==='strum'?strumStep(p,k,when,ch):pickStep(p,k,when,ch),(k,ch)=>{
+    startLoop(card,btn,p,(k,when,ch)=>{
+      if(prefs.lclick!==false&&k%p.sub===0)tick(when,k===0);
+      if(kind==='strum')strumStep(p,k,when,ch);else pickStep(p,k,when,ch);
+    },(k,ch)=>{
       if(ch!==last){last=ch;now.textContent=ch;$('l-now-t').textContent='Practicando: '+p.n+' · '+ch;if(kind==='pick')pickGrid(grid,p,ch)}
       grid.querySelectorAll('.now').forEach(x=>x.classList.remove('now'));
       grid.querySelectorAll('[data-k="'+k+'"]').forEach(x=>x.classList.add('now'));
@@ -1122,7 +1143,7 @@ function renderLearn(){
   if(ltab==='strum'||ltab==='pick'){
     const wrap=el('div','lcards');
     (ltab==='strum'?STRUMS:PICKS).forEach(p=>wrap.append(lessonCard(p,ltab)));
-    body.append(el('p','hint',ltab==='strum'?'↓ abajo · ↑ arriba · ✕ golpe apagado · B solo el bajo · «·» la mano pasa sin tocar. Empezá lento y subí los BPM de a poco.':'Los números son el traste de cada cuerda para el acorde que suena. 1ª es la cuerda más fina.'),wrap);
+    body.append(el('p','hint',ltab==='strum'?'↓ abajo, ↑ arriba, ✕ golpe apagado, B solo el bajo. Las flechas tenues son pasadas sin tocar: la mano sigue el movimiento pero no pega en las cuerdas. El metrónomo marca cada tiempo para que no pierdas el pulso. Empezá lento y subí los BPM de a poco.':'Los números son el traste de cada cuerda para el acorde que suena. 1ª es la cuerda más fina.'),wrap);
     body.firstChild.style.marginBottom='12px';
   }else if(ltab==='tune'){
     body.append(el('p','hint','Tocá cada botón y ajustá la clavija hasta que tu cuerda suene igual. De la 6ª (la más gruesa) a la 1ª.'));
@@ -1165,6 +1186,9 @@ const bpm=d=>{prefs.lbpm=Math.max(40,Math.min(180,prefs.lbpm+d));savePrefs();$('
 bpm(0);
 $('l-bdown').addEventListener('click',()=>bpm(-5));
 $('l-bup').addEventListener('click',()=>bpm(5));
+const clickLabel=()=>{$('l-click').textContent='Metrónomo: '+(prefs.lclick===false?'no':'sí')};
+clickLabel();
+$('l-click').addEventListener('click',()=>{prefs.lclick=prefs.lclick===false;savePrefs();clickLabel()});
 document.querySelectorAll('.seg button').forEach(b=>b.addEventListener('click',()=>{ltab=b.dataset.tab;renderLearn()}));
 $('l-stop').addEventListener('click',stopLoop);
 $('l-now-t').addEventListener('click',()=>{if(loop)loop.card.scrollIntoView({behavior:'smooth',block:'center'})});
