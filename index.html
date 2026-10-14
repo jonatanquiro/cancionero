@@ -167,6 +167,12 @@ svg{width:18px;height:18px;fill:currentColor}
 .dcard{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:10px 6px;display:flex;flex-direction:column;align-items:center;gap:4px}
 .dcard b{font-size:1.15rem;color:var(--chord)}
 
+.nowbar{position:fixed;left:0;right:0;bottom:0;z-index:7;display:flex;gap:10px;align-items:center;justify-content:space-between;
+  padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:var(--bar);border-top:1px solid var(--line);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.nowt{border:0;background:none;color:var(--ink);font-weight:700;text-align:left;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:8px 0}
+.lcard.playing{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+#v-learn .narrow{padding-bottom:80px}
+
 /* Editor */
 form{display:flex;flex-direction:column;gap:14px;margin-top:20px}
 .two{display:flex;flex-wrap:wrap;gap:14px}
@@ -291,6 +297,10 @@ textarea{font-family:var(--f-mono);font-size:14px;line-height:1.35;min-height:46
     </div>
   </div>
   <div id="l-body"></div>
+  <div class="nowbar" id="l-now" hidden>
+    <button class="nowt" id="l-now-t" type="button" title="Ir a la práctica"></button>
+    <button class="btn primary" id="l-stop" type="button">Parar</button>
+  </div>
 </div></div>
 
 <div id="v-edit" class="wrap" hidden><div class="narrow">
@@ -493,7 +503,7 @@ const STANDALONE=!window.claude;
 /* ---------- vistas ---------- */
 let view='list',curId=null,shown=null;
 function show(v){
-  stopScroll();setBar(true);closeChord();if(v!=='learn')stopLoop();view=v;
+  stopScroll();setBar(true);closeChord();stopLoop();silence();view=v;
   $('v-list').hidden=v!=='list';$('v-song').hidden=v!=='song';$('v-edit').hidden=v!=='edit';$('v-learn').hidden=v!=='learn';
   $('n-list').classList.toggle('on',v!=='learn');$('n-learn').classList.toggle('on',v==='learn');
   window.scrollTo(0,0);
@@ -912,7 +922,7 @@ function diagramSVG(frets){
 }
 
 /* sonido: cuerda pulsada sintetizada (Karplus-Strong), sin archivos de audio */
-let actx=null,master=null;const bufs=new Map(),ringing=new Array(6).fill(null);
+let actx=null,master=null;const bufs=new Map(),ringing=new Array(6).fill(null),live=new Set();
 function ac(){
   if(!actx){
     const C=window.AudioContext||window.webkitAudioContext;if(!C)return null;
@@ -937,8 +947,15 @@ function voice(i,midi,when,vol,len,long){
   const s=ctx.createBufferSource(),g=ctx.createGain();
   s.buffer=pluckBuf(ctx,midi,long);g.gain.setValueAtTime(vol,when);
   if(len){g.gain.setTargetAtTime(0,when+len,0.02);s.stop(when+len+0.3)}
-  s.connect(g);g.connect(master);s.start(when);ringing[i]={s,g};
+  s.connect(g);g.connect(master);s.start(when);
+  const v={s,g};ringing[i]=v;live.add(v);s.onended=()=>live.delete(v);
   return true;
+}
+// corta todo lo que suena o está programado, con un fundido corto para que no haga "clic"
+function silence(){
+  if(!actx)return;const t=actx.currentTime;
+  live.forEach(v=>{try{v.g.gain.cancelScheduledValues(t);v.g.gain.setTargetAtTime(0,t,0.02);v.s.stop(t+0.15)}catch(e){}});
+  live.clear();ringing.fill(null);
 }
 function strum(frets,when,dir,vol,len){
   const order=dir==='up'?[5,4,3,2,1,0]:[0,1,2,3,4,5];let k=0;
@@ -1016,11 +1033,20 @@ const PICKS=[
 const PROGS=[['G'],['C'],['D'],['Em'],['Am'],['E'],['A'],['Dm'],['G','Em','C','D'],['C','G','Am','F'],['Am','F','C','G'],['D','A','Bm','G'],['E','A','B7','E'],['Em','C','G','D']];
 if(!(prefs.lbpm>=40))prefs.lbpm=80;if(!(prefs.lprog>=0&&prefs.lprog<PROGS.length))prefs.lprog=8;
 let ltab='strum',loop=null;
-function stopLoop(){if(loop){clearInterval(loop.timer);loop.timers.forEach(clearTimeout);loop.card.classList.remove('playing');loop.btn.textContent='Practicar';loop.card.querySelectorAll('.now').forEach(x=>x.classList.remove('now'));loop=null}}
+function stopLoop(){
+  if(!loop)return;
+  clearInterval(loop.timer);loop.timers.forEach(clearTimeout);
+  loop.card.classList.remove('playing');loop.btn.textContent='Practicar';
+  loop.card.querySelectorAll('.now').forEach(x=>x.classList.remove('now'));
+  loop=null;silence();$('l-now').hidden=true;
+}
 function startLoop(card,btn,p,play,onStep){
   stopLoop();const ctx=ac();if(!ctx){noSound();return}
   const n=p.s.length;let next=ctx.currentTime+0.1,i=0;
-  loop={card,btn,timers:[],timer:setInterval(()=>{
+  loop={card,btn,name:p.n,timers:[],timer:setInterval(()=>{
+    if(!card.isConnected||view!=='learn'||document.hidden){stopLoop();return}
+    // si el navegador frenó el reloj (pantalla bloqueada, otra app), no recupera los golpes perdidos de golpe
+    if(next<ctx.currentTime)next=ctx.currentTime+0.05;
     while(next<ctx.currentTime+0.15){
       const k=i%n,chord=PROGS[prefs.lprog][Math.floor(i/n)%PROGS[prefs.lprog].length];
       play(k,next,chord);
@@ -1031,6 +1057,7 @@ function startLoop(card,btn,p,play,onStep){
     }
   },25)};
   btn.textContent='Parar';card.classList.add('playing');
+  $('l-now-t').textContent='Practicando: '+p.n;$('l-now').hidden=false;
 }
 const counts=(p)=>p.sub===1?p.s.length===3?['1','2','3']:['1','2','3','4']:p.s.length===6?['1','y','2','y','3','y']:['1','y','2','y','3','y','4','y'];
 const ARROW={D:'↓',U:'↑',X:'✕',x:'·↓',B:'B','-':'·'};
@@ -1079,7 +1106,7 @@ function lessonCard(p,kind){
     if(loop&&loop.card===card){stopLoop();return}
     let last=null;
     startLoop(card,btn,p,(k,when,ch)=>kind==='strum'?strumStep(p,k,when,ch):pickStep(p,k,when,ch),(k,ch)=>{
-      if(ch!==last){last=ch;now.textContent=ch;if(kind==='pick')pickGrid(grid,p,ch)}
+      if(ch!==last){last=ch;now.textContent=ch;$('l-now-t').textContent='Practicando: '+p.n+' · '+ch;if(kind==='pick')pickGrid(grid,p,ch)}
       grid.querySelectorAll('.now').forEach(x=>x.classList.remove('now'));
       grid.querySelectorAll('[data-k="'+k+'"]').forEach(x=>x.classList.add('now'));
     });
@@ -1138,6 +1165,10 @@ bpm(0);
 $('l-bdown').addEventListener('click',()=>bpm(-5));
 $('l-bup').addEventListener('click',()=>bpm(5));
 document.querySelectorAll('.seg button').forEach(b=>b.addEventListener('click',()=>{ltab=b.dataset.tab;renderLearn()}));
+$('l-stop').addEventListener('click',stopLoop);
+$('l-now-t').addEventListener('click',()=>{if(loop)loop.card.scrollIntoView({behavior:'smooth',block:'center'})});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopLoop()});
+window.addEventListener('pagehide',stopLoop);
 
 /* barra superior */
 $('b-home').addEventListener('click',()=>{show('list');renderList()});
