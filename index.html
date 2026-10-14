@@ -836,13 +836,13 @@ $('b-del2').addEventListener('click',async()=>{
 /* ---------- guitarra: formas de acordes, sonido y lecciones ---------- */
 // cuerdas al aire de 6ª a 1ª (Mi grave → Mi agudo), en notas MIDI
 const OPEN_MIDI=[40,45,50,55,59,64];
-// formas abiertas habituales, de 6ª a 1ª ("x" = no se toca)
+// formas abiertas habituales, de 6ª a 1ª ("x" = no se toca); con "|" van formas alternativas, la primera es la que se muestra
 const OPEN_SHAPES={
   C:'x32010',C7:'x32310',Cmaj7:'x32000',Cadd9:'x32030',Csus2:'x30013',Csus4:'x33011',C6:'x32210',
   D:'xx0232',Dm:'xx0231',D7:'xx0212',Dm7:'xx0211',Dmaj7:'xx0222',Dsus2:'xx0230',Dsus4:'xx0233',D6:'xx0202',
   E:'022100',Em:'022000',E7:'020100',Em7:'022030',Emaj7:'021100',Esus4:'022200',E6:'022120',Em6:'022020',
   F:'133211',Fmaj7:'xx3210',
-  G:'320003',G7:'320001',Gmaj7:'320002',G6:'320000',Gsus4:'330013',
+  G:'320033|320003',G7:'320001',Gmaj7:'320002',G6:'320000',Gsus4:'330013',
   A:'x02220',Am:'x02210',A7:'x02020',Am7:'x02010',Amaj7:'x02120',Asus2:'x02200',Asus4:'x02230',A6:'x02222',Am6:'x02212',
   B7:'x21202',Bm:'x24432',Bm7:'x20202'
 };
@@ -878,7 +878,7 @@ function chordInfo(name){
 }
 function shapesFor(root,q){
   const out=[],o=OPEN_SHAPES[NS[root]+SUF[q]];
-  if(o){const fr=[...o].map(c=>c==='x'?null:+c),lo=Math.min(...fr.filter(f=>f!==null));out.push({frets:fr,kind:lo>0?'Con cejilla en el traste '+lo:'Forma abierta'})}
+  if(o)o.split('|').forEach(v=>{const fr=[...v].map(c=>c==='x'?null:+c),lo=Math.min(...fr.filter(f=>f!==null));out.push({frets:fr,kind:lo>0?'Con cejilla en el traste '+lo:'Forma abierta'})});
   [[E_SH,4,'6ª'],[A_SH,9,'5ª']].forEach(([sh,low,str])=>{
     const rel=sh[q];if(!rel)return;
     let r=(root-low+12)%12;if(rel.some(v=>v!==null&&r+v<0))r+=12;
@@ -910,9 +910,10 @@ function diagramSVG(frets){
     else if(f===0)s+=`<circle cx="${x}" cy="${y0-14}" r="5" style="fill:none;stroke:${ink};stroke-width:1.6"/>`;
   });
   let bar=null;
-  if(min>0){
-    const idx=frets.map((f,i)=>f===min?i:-1).filter(i=>i>=0),a=idx[0],b=idx[idx.length-1];
-    if(b-a>=2&&frets.slice(a,b+1).every(f=>f!==null&&f>=min))bar=[a,b];
+  const first=frets.findIndex(f=>f!==null);
+  if(min>0&&!frets.includes(0)&&frets[first]===min){
+    const idx=frets.map((f,i)=>f===min?i:-1).filter(i=>i>=0),b=idx[idx.length-1];
+    if(b-first>=2&&frets.slice(first,b+1).every(f=>f!==null&&f>=min))bar=[first,b];
   }
   if(bar){const y=y0+(min-base+0.5)*dy;s+=`<rect x="${x0+bar[0]*dx-8}" y="${y-8}" width="${(bar[1]-bar[0])*dx+16}" height="16" rx="8" style="fill:${dot}"/>`}
   frets.forEach((f,i)=>{if(f>0&&!(bar&&f===min&&i>=bar[0]&&i<=bar[1]))s+=`<circle cx="${x0+i*dx}" cy="${y0+(f-base+0.5)*dy}" r="7.5" style="fill:${dot}"/>`});
