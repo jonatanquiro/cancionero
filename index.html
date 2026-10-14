@@ -210,6 +210,7 @@ textarea{font-family:var(--f-mono);font-size:14px;line-height:1.35;min-height:46
       <button class="btn" id="b-imp">Importar archivos</button>
       <input id="f-imp" type="file" multiple accept=".txt,.text,.crd,.cho,.chopro,.json,text/plain,application/json" hidden>
       <button class="btn" id="b-exp" hidden>Guardar copia</button>
+      <button class="btn" id="b-share" hidden>Compartir canciones</button>
       <button class="btn primary" id="b-new">Nueva canción</button>
     </div>
   </div>
@@ -243,6 +244,7 @@ textarea{font-family:var(--f-mono);font-size:14px;line-height:1.35;min-height:46
   <div class="shead">
     <div><h1 id="s-title"></h1><p class="sub" id="s-artist"></p></div>
     <div class="actions">
+      <button class="btn link" id="b-share1" hidden>Compartir</button>
       <button class="btn link" id="b-gh" hidden>Archivos para GitHub</button>
       <button class="btn link" id="b-edit">Editar</button>
     </div>
@@ -588,7 +590,7 @@ function openSong(id,keep){
   curId=id;shown=s;
   $('s-title').textContent=s.title||'Sin título';
   $('s-artist').textContent=[s.artist,s.genre,s.capo?'Cejilla en traste '+s.capo:''].filter(Boolean).join(' · ');
-  $('b-edit').hidden=!!s.repo;$('b-gh').hidden=!(STANDALONE&&!s.repo);$('gh').hidden=true;
+  $('b-edit').hidden=!!s.repo;$('b-gh').hidden=!(STANDALONE&&!s.repo);$('b-share1').hidden=!STANDALONE;$('gh').hidden=true;
   if(s.repo&&typeof s.body!=='string'){
     $('sheet').replaceChildren(el('p','empty','Cargando…'));
     loadBody(s).then(ok=>{
@@ -785,6 +787,30 @@ if(STANDALONE){
     const a=el('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.append(a);a.click();a.remove();
     setTimeout(()=>URL.revokeObjectURL(a.href),4000);
   };
+  // compartir: abre WhatsApp, mail, etc. con el archivo; si el teléfono no puede, lo descarga
+  const appUrl=location.href.split('#')[0].split('?')[0];
+  async function shareSongs(name,list,title){
+    const text=JSON.stringify({cancionero:1,exported:new Date().toISOString(),songs:list});
+    const msg='Abrí '+appUrl+' , tocá «Importar archivos» y elegí este archivo.';
+    try{
+      const file=new File([text],name,{type:'application/json'});
+      if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title,text:msg});return}
+    }catch(e){if(e&&e.name==='AbortError')return}
+    download(name,text,'application/json');
+    toast('Se descargó '+name+'. Mandáselo y que lo cargue con «Importar archivos».');
+  }
+  $('b-share').hidden=false;
+  $('b-share').addEventListener('click',()=>{
+    const list=Object.fromEntries(Object.entries(songs).filter(([,x])=>!x.example&&typeof x.body==='string'));
+    if(!Object.keys(list).length){toast('Todavía no hay canciones para compartir.');return}
+    shareSongs('canciones.cancionero.json',list,'Mis canciones');
+  });
+  $('b-share1').addEventListener('click',()=>{
+    const x=songs[curId];if(!x||typeof x.body!=='string')return;
+    const name=(norm(x.title).replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'tema')+'.cancionero.json';
+    const copy={...x};delete copy.repo;delete copy.src;
+    shareSongs(name,{[curId]:copy},x.title);
+  });
   $('b-exp').addEventListener('click',()=>download('cancionero-copia.json',JSON.stringify({cancionero:1,exported:new Date().toISOString(),songs:ownSongs()}),'application/json'));
   $('b-gh').addEventListener('click',()=>{
     const s=songs[curId];if(!s||s.repo)return;
