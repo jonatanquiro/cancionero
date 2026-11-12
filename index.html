@@ -369,7 +369,11 @@ const NF=['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const IDX={C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,Fb:4,'E#':5,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11,Cb:11,'B#':0};
 const CH=/^[A-G][#b]?(?:maj|min|m|M|dim|aug|sus|add|°|º|\+)?\d*(?:(?:maj|min|M|m|dim|aug|sus|add|[#b+\-°º])\d*)*(?:\([^)\s]*\))?(?:\/(?:[A-G][#b]?|\d+))*$/;
 const FILL=/^(?:\|+|\/|%|-+|x\d+|\d+x|\(x\d+\)|n\.?c\.?|\.{2,}|:\||\|:|\(|\))$/i;
-const strip=t=>t.replace(/^[(\[]+/,'').replace(/[)\]]+$/,'');
+// al copiar de páginas web suelen venir caracteres invisibles (espacio de ancho cero) y espacios "duros";
+// sin limpiarlos, una línea de acordes se lee como letra
+const cleanText=t=>String(t||'').replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g,'').replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g,' ');
+// también se ignoran signos pegados al acorde: "(Am", "Em,", "G.", "-Em", "*C"
+const strip=t=>t.replace(/^[(\[\-*]+/,'').replace(/[)\],.;:*]+$/,'');
 const isChordTok=t=>CH.test(t)||CH.test(strip(t));
 function isChordLine(ln){
   const ts=ln.trim().split(/\s+/);let any=false;
@@ -384,13 +388,17 @@ function tr(tok,n,flats){
 }
 
 function parse(body){
-  const lines=String(body||'').replace(/\r/g,'').replace(/\t/g,'    ').split('\n');
+  const lines=cleanText(body).replace(/\r/g,'').replace(/\t/g,'    ').split('\n');
   const secs=[];let cur=null;
   const push=x=>{if(!cur){cur=[];secs.push(cur)}cur.push(x)};
   for(let i=0;i<lines.length;i++){
     let ln=lines[i].replace(/\s+$/,'');
     if(!ln.trim()){cur=null;continue}
-    const h=ln.match(/^\s*\[([^\]]+)\]\s*(.*)$/);
+    let h=ln.match(/^\s*\[([^\]]+)\]\s*(.*)$/);
+    if(!h){
+      const m=ln.match(/^\s*([A-Za-zÁÉÍÓÚáéíóúÑñ][A-Za-zÁÉÍÓÚáéíóúÑñ .\-]{1,24}):\s*(.*)$/);
+      if(m&&(m[2].trim()?isChordLine(m[2]):/^(intro|estribillo|coro|pre-?coro|puente|solo|final|outro|riff|interludio|instrumental|verso|estrofa|primera parte|segunda parte)$/i.test(m[1].trim())))h=m;
+    }
     if(h){cur=null;push({k:'lbl',text:h[1]});if(!h[2])continue;ln=h[2]}
     if(isTab(ln)){const last=cur&&cur[cur.length-1];if(last&&last.k==='tab')last.lines.push(ln);else push({k:'tab',lines:[ln]});continue}
     if(isChordLine(ln)){
@@ -669,7 +677,7 @@ function readText(f){
   return rd('utf-8').then(t=>t.includes(String.fromCharCode(0xFFFD))?rd('windows-1252'):t);
 }
 function fromFile(name,text){
-  const lines=(text.charCodeAt(0)===0xFEFF?text.slice(1):text).replace(/\r/g,'').split('\n');
+  const lines=cleanText(text).replace(/\r/g,'').split('\n');
   let title=name.replace(/\.[^.]+$/,'').replace(/[_-]+/g,' ').trim(),artist='';
   title=title.charAt(0).toUpperCase()+title.slice(1);
   let i=0;while(i<lines.length&&!lines[i].trim())i++;
@@ -861,7 +869,7 @@ $('f-file').addEventListener('change',e=>{
 });
 $('form').addEventListener('submit',async e=>{
   e.preventDefault();
-  const title=$('f-title').value.trim(),body=$('f-body').value.replace(/\s+$/,'');
+  const title=$('f-title').value.trim(),body=cleanText($('f-body').value).replace(/\s+$/,'');
   if(!title||!body.trim())return;
   const id=editId||('s'+Date.now().toString(36)+Math.random().toString(36).slice(2,7));
   const d={title,artist:$('f-artist').value.trim(),capo:Math.max(0,Math.min(12,parseInt($('f-capo').value,10)||0)),body,updatedAt:Date.now()};
